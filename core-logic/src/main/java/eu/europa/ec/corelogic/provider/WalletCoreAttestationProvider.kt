@@ -16,6 +16,7 @@
 
 package eu.europa.ec.corelogic.provider
 
+import android.util.Log
 import eu.europa.ec.corelogic.config.WalletCoreConfig
 import eu.europa.ec.eudi.openid4vci.Nonce
 import eu.europa.ec.eudi.wallet.provider.WalletAttestationsProvider
@@ -29,19 +30,43 @@ class WalletCoreAttestationProviderImpl(
     private val walletAttestationRepository: WalletAttestationRepository
 ) : WalletCoreAttestationProvider {
 
+    private companion object {
+        private const val TAG = "OID4VCI_ATTESTATION"
+    }
+
     override suspend fun getWalletAttestation(
         keyInfo: KeyInfo
-    ): Result<String> = walletAttestationRepository.getWalletAttestation(
-        baseUrl = walletCoreConfig.walletProviderHost,
-        keyInfo = keyInfo.publicKey.toJwk()
-    )
+    ): Result<String> {
+        val baseUrl = walletCoreConfig.walletProviderHost
+        Log.d(TAG, "getWalletAttestation: baseUrl=$baseUrl")
+        return walletAttestationRepository.getWalletAttestation(
+            baseUrl = baseUrl,
+            keyInfo = keyInfo.publicKey.toJwk()
+        )
+            .onSuccess { jwt ->
+                Log.d(TAG, "getWalletAttestation: OK jwtLength=${jwt.length}")
+            }
+            .onFailure { e ->
+                Log.e(TAG, "getWalletAttestation: FAILED", e)
+            }
+    }
 
     override suspend fun getKeyAttestation(
         keys: List<KeyInfo>,
         nonce: Nonce?
-    ): Result<String> = walletAttestationRepository.getKeyAttestation(
-        baseUrl = walletCoreConfig.walletProviderHost,
-        keys = keys.map { it.publicKey.toJwk() },
-        nonce = nonce?.value
-    )
+    ): Result<String> {
+        val baseUrl = walletCoreConfig.walletProviderHost
+        Log.d(TAG, "getKeyAttestation: baseUrl=$baseUrl keysCount=${keys.size} nonce=${nonce != null}")
+        return walletAttestationRepository.getKeyAttestation(
+            baseUrl = baseUrl,
+            keys = keys.map { it.publicKey.toJwk() },
+            nonce = nonce?.value
+        )
+            .onSuccess { jwt ->
+                Log.d(TAG, "getKeyAttestation: OK jwtLength=${jwt.length}")
+            }
+            .onFailure { e ->
+                Log.e(TAG, "getKeyAttestation: FAILED", e)
+            }
+    }
 }

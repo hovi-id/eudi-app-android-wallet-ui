@@ -18,6 +18,7 @@ package eu.europa.ec.corelogic.di
 
 import android.content.Context
 import eu.europa.ec.businesslogic.controller.log.LogController
+import eu.europa.ec.businesslogic.controller.storage.PrefsController
 import eu.europa.ec.businesslogic.provider.UuidProvider
 import eu.europa.ec.corelogic.config.WalletCoreConfig
 import eu.europa.ec.corelogic.config.WalletCoreConfigImpl
@@ -73,7 +74,13 @@ fun provideEudiWallet(
 @Single
 fun provideWalletCoreConfig(
     context: Context,
-): WalletCoreConfig = WalletCoreConfigImpl(context)
+    walletAttestationRepository: WalletAttestationRepository,
+    prefsController: PrefsController,
+): WalletCoreConfig = WalletCoreConfigImpl(
+    context = context,
+    walletAttestationRepository = walletAttestationRepository,
+    prefsController = prefsController
+)
 
 @Single
 fun provideWalletCoreLogController(logController: LogController): WalletCoreLogController =

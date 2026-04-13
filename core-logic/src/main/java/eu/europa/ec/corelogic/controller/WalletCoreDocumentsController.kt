@@ -16,6 +16,7 @@
 
 package eu.europa.ec.corelogic.controller
 
+import android.util.Log
 import androidx.core.net.toUri
 import eu.europa.ec.authenticationlogic.controller.authentication.DeviceAuthenticationResult
 import eu.europa.ec.authenticationlogic.model.BiometricCrypto
@@ -70,6 +71,7 @@ import kotlinx.coroutines.flow.flow
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 import org.json.JSONObject
+import java.net.URI
 import java.net.URLDecoder
 import java.util.Locale
 
@@ -210,6 +212,9 @@ class WalletCoreDocumentsControllerImpl(
     private val revokedDocumentDao: RevokedDocumentDao,
     private val dispatcher: CoroutineDispatcher = Dispatchers.IO
 ) : WalletCoreDocumentsController {
+    private companion object {
+        private const val TAG = "OID4VCI_DEBUG"
+    }
 
     private val genericErrorMessage
         get() = resourceProvider.genericErrorMessage()
@@ -226,6 +231,12 @@ class WalletCoreDocumentsControllerImpl(
     private val openId4VciManagers: Map<VciConfig, OpenId4VciManager> by lazy {
         walletCoreConfig.issuersConfig.associateWith { orderConfig ->
             eudiWallet.createOpenId4VciManager(config = orderConfig.config)
+        }.also { managers ->
+            Log.d(
+                TAG,
+                "OpenId4Vci managers initialized count=${managers.size} issuers=" +
+                    managers.keys.joinToString { it.config.issuerUrl }
+            )
         }
     }
 
@@ -283,9 +294,14 @@ class WalletCoreDocumentsControllerImpl(
                     FetchScopedDocumentsPartialState.Failure(errorMessage = genericErrorMessage)
                 }
             }
-        }.getOrElse {
+        }.getOrElse { e ->
+            Log.e(
+                TAG,
+                "getScopedDocuments: FAILED ${e.javaClass.simpleName} message=${e.localizedMessage}",
+                e
+            )
             FetchScopedDocumentsPartialState.Failure(
-                errorMessage = it.localizedMessage ?: genericErrorMessage
+                errorMessage = e.localizedMessage ?: genericErrorMessage
             )
         }
     }
@@ -331,11 +347,18 @@ class WalletCoreDocumentsControllerImpl(
                     prioritizeDeferred
                 ).collect { response ->
                     when (response) {
-                        is IssueDocumentsPartialState.Failure -> emit(
-                            IssueDocumentsPartialState.Failure(
-                                errorMessage = documentErrorMessage
+                        is IssueDocumentsPartialState.Failure -> {
+                            Log.e(
+                                TAG,
+                                "issueDocuments: upstream Failure before generic user message " +
+                                    "(detail=${response.errorMessage})"
                             )
-                        )
+                            emit(
+                                IssueDocumentsPartialState.Failure(
+                                    errorMessage = documentErrorMessage
+                                )
+                            )
+                        }
 
                         is IssueDocumentsPartialState.Success -> emit(
                             IssueDocumentsPartialState.Success(
@@ -385,7 +408,24 @@ class WalletCoreDocumentsControllerImpl(
                 .find { (vciConfig, _) ->
                     vciConfig.config.issuerUrl == issuerId
                 }?.value
-                ?: openId4VciManagers.values.firstOrNull()
+                ?: run {
+                    val issuerHost = issuerId.toUriHostOrNull()
+                    openId4VciManagers.entries.find { (vciConfig, _) ->
+                        vciConfig.config.issuerUrl.toUriHostOrNull() == issuerHost
+                    }?.value
+                }
+                ?: openId4VciManagers.values.firstOrNull()?.also {
+                    Log.w(
+                        TAG,
+                        "issueByOffer fallback to first manager for issuerId=$issuerId"
+                    )
+                }
+
+            Log.d(TAG, "issueByOffer issuerId=$issuerId txCodeProvided=${!txCode.isNullOrBlank()}")
+            Log.d(TAG, "issueByOffer managerMatched=${manager != null}")
+            if (manager == null) {
+                Log.e(TAG, "issueByOffer no exact manager for issuerId=$issuerId")
+            }
 
             require(manager != null) { documentErrorMessage }
 
@@ -488,18 +528,31 @@ class WalletCoreDocumentsControllerImpl(
         callbackFlow {
 
             val issuerId = extractCredentialIssuerFromOfferUri(offerUri).getOrNull()
+            Log.d(TAG, "resolveOffer uri=$offerUri")
+            Log.d(TAG, "resolveOffer extractedIssuerId=$issuerId")
 
             val manager: OpenId4VciManager? = issuerId?.let { id ->
                 openId4VciManagers.entries.find { (vciConfig, _) ->
                     vciConfig.config.issuerUrl == id
                 }?.value
-            } ?: openId4VciManagers.values.firstOrNull()
+            } ?: run {
+                // credential_offer_uri links may not carry inline credential_offer with issuer.
+                // In this case we fallback to first manager for resolution only.
+                openId4VciManagers.values.firstOrNull()?.also {
+                    Log.w(TAG, "resolveOffer fallback to first manager because extractedIssuerId is null")
+                }
+            }
 
+            Log.d(TAG, "resolveOffer managerMatched=${manager != null}")
+            if (manager == null) {
+                Log.e(TAG, "resolveOffer no exact manager for extractedIssuerId=$issuerId")
+            }
             require(manager != null) { genericErrorMessage }
 
             manager.resolveDocumentOffer(offerUri) { result ->
                 when (result) {
                     is OfferResult.Failure -> {
+                        Log.e(TAG, "resolveOffer failure=${result.cause.localizedMessage}", result.cause)
                         trySendBlocking(
                             ResolveDocumentOfferPartialState.Failure(
                                 result.cause.localizedMessage ?: genericErrorMessage
@@ -666,6 +719,10 @@ class WalletCoreDocumentsControllerImpl(
                 openId4VciManagers.entries.find { (vciConfig, _) ->
                     vciConfig.config.issuerUrl == issuerId
                 }?.value
+            Log.d(
+                TAG,
+                "issueOpenId4Vci issuerId=$issuerId configIds=${configIds.joinToString()} managerMatched=${manager != null}"
+            )
             require(manager != null) { documentErrorMessage }
 
             manager.issueDocumentByConfigurationIdentifiers(
@@ -693,6 +750,10 @@ class WalletCoreDocumentsControllerImpl(
         val listener = OpenId4VciManager.OnIssueEvent { event ->
             when (event) {
                 is IssueEvent.DocumentFailed -> {
+                    Log.e(
+                        TAG,
+                        "issueEvent DocumentFailed docType=${event.docType} name=${event.name}"
+                    )
                     nonIssuedDocuments[event.docType] = event.name
                 }
 
@@ -703,6 +764,13 @@ class WalletCoreDocumentsControllerImpl(
                         val documentIssuanceRule = walletCoreConfig
                             .documentIssuanceConfig
                             .getRuleForDocument(documentIdentifier = offeredDocIdentifier)
+                        Log.d(
+                            TAG,
+                            "issueEvent createSettings docType=${event.offeredDocument.documentFormat} " +
+                                "identifier=$offeredDocIdentifier " +
+                                "policy=${documentIssuanceRule.policy} " +
+                                "requestedCredentials=${documentIssuanceRule.numberOfCredentials}"
+                        )
 
                         event.resume(
                             eudiWallet.getDefaultCreateDocumentSettings(
@@ -739,6 +807,11 @@ class WalletCoreDocumentsControllerImpl(
                 }
 
                 is IssueEvent.Failure -> {
+                    val cause = runCatching {
+                        val m = event.javaClass.methods.find { it.name == "getCause" }
+                        m?.invoke(event) as? Throwable
+                    }.getOrNull()
+                    Log.e(TAG, "issueEvent Failure event=$event cause=$cause", cause)
                     trySendBlocking(
                         IssueDocumentsPartialState.Failure(
                             errorMessage = documentErrorMessage
@@ -747,6 +820,14 @@ class WalletCoreDocumentsControllerImpl(
                 }
 
                 is IssueEvent.Finished -> {
+                    Log.d(
+                        TAG,
+                        "issueEvent finished totalRequested=$totalDocumentsToBeIssued " +
+                            "issued=${event.issuedDocuments.size} " +
+                            "trackedIssued=${issuedDocuments.size} " +
+                            "deferred=${deferredDocuments.size} " +
+                            "failed=${nonIssuedDocuments.size}"
+                    )
 
                     if (deferredDocuments.isNotEmpty() && (prioritizeDeferred || (issuedDocuments.isEmpty()))) {
                         trySendBlocking(IssueDocumentsPartialState.DeferredSuccess(deferredDocuments))
@@ -781,10 +862,16 @@ class WalletCoreDocumentsControllerImpl(
 
                 is IssueEvent.DocumentIssued -> {
                     issuedDocuments[event.documentId] = event.docType
+                    Log.d(
+                        TAG,
+                        "issueEvent documentIssued id=${event.documentId} docType=${event.docType} " +
+                            "trackedIssuedNow=${issuedDocuments.size}"
+                    )
                 }
 
                 is IssueEvent.Started -> {
                     totalDocumentsToBeIssued = event.total
+                    Log.d(TAG, "issueEvent started total=$totalDocumentsToBeIssued")
                 }
 
                 is IssueEvent.DocumentDeferred -> {
@@ -803,4 +890,8 @@ class WalletCoreDocumentsControllerImpl(
             val json = JSONObject(decoded)
             json.getString("credential_issuer")
         }
+
+    private fun String.toUriHostOrNull(): String? = runCatching {
+        URI(this).host
+    }.getOrNull()?.lowercase()
 }

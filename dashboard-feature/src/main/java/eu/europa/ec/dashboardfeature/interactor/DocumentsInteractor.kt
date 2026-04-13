@@ -16,6 +16,7 @@
 
 package eu.europa.ec.dashboardfeature.interactor
 
+import android.util.Log
 import eu.europa.ec.businesslogic.config.ConfigLogic
 import eu.europa.ec.businesslogic.extension.isBeyondNextDays
 import eu.europa.ec.businesslogic.extension.isExpired
@@ -172,6 +173,10 @@ class DocumentsInteractorImpl(
     private val filterValidator: FilterValidator,
     private val configLogic: ConfigLogic
 ) : DocumentsInteractor {
+
+    private companion object {
+        private const val TAG = "DOCUMENTS_LIST_DEBUG"
+    }
 
     private val genericErrorMsg
         get() = resourceProvider.genericErrorMessage()
@@ -347,6 +352,12 @@ class DocumentsInteractorImpl(
                                 )
                             }
 
+                            val documentLowOnCredentials = if (!documentIsRevoked) {
+                                walletCoreDocumentsController.isDocumentLowOnCredentials(document)
+                            } else {
+                                false
+                            }
+
                             val trailingContentData = if (documentIsRevoked) {
                                 ListItemTrailingContentDataUi.Icon(
                                     iconData = AppIcons.ErrorFilled,
@@ -366,9 +377,6 @@ class DocumentsInteractorImpl(
                                     )
                                 )
 
-                                val documentLowOnCredentials = walletCoreDocumentsController
-                                    .isDocumentLowOnCredentials(document)
-
                                 if (documentLowOnCredentials) {
                                     ListItemTrailingContentDataUi.TextWithIcon(
                                         text = documentCredentialsInfoUi.title,
@@ -382,6 +390,21 @@ class DocumentsInteractorImpl(
                                     )
                                 }
                             }
+
+                            val trailingReason = when {
+                                documentIsRevoked -> "revoked -> Icon(ErrorFilled)"
+                                documentLowOnCredentials ->
+                                    "low_on_credentials (policy=OneTimeUse && remaining<=1) " +
+                                        "creds=${document.credentialsCount()}/${document.initialCredentialsCount()} " +
+                                        "-> TextWithIcon(ErrorFilled, warning)"
+                                else -> "normal -> TextWithIcon(KeyboardArrowRight)"
+                            }
+                            Log.d(
+                                TAG,
+                                "documentId=${document.id} name=$documentName " +
+                                    "revoked=$documentIsRevoked expired=$documentHasExpired " +
+                                    "trailing=$trailingReason"
+                            )
 
                             FilterableItem(
                                 payload = DocumentUi(

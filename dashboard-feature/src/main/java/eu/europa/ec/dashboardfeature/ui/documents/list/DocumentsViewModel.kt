@@ -16,6 +16,7 @@
 
 package eu.europa.ec.dashboardfeature.ui.documents.list
 
+import android.util.Log
 import androidx.lifecycle.viewModelScope
 import eu.europa.ec.businesslogic.validator.model.FilterableList
 import eu.europa.ec.businesslogic.validator.model.SortOrder
@@ -42,6 +43,7 @@ import eu.europa.ec.resourceslogic.theme.values.ThemeColors
 import eu.europa.ec.uilogic.component.AppIcons
 import eu.europa.ec.uilogic.component.DualSelectorButton
 import eu.europa.ec.uilogic.component.DualSelectorButtonDataUi
+import eu.europa.ec.uilogic.component.ListItemMainContentDataUi
 import eu.europa.ec.uilogic.component.ListItemTrailingContentDataUi
 import eu.europa.ec.uilogic.component.ModalOptionUi
 import eu.europa.ec.uilogic.component.content.ContentErrorConfig
@@ -158,6 +160,8 @@ sealed class DocumentsBottomSheetContent {
         val options: List<ModalOptionUi<Event>>,
     ) : DocumentsBottomSheetContent()
 }
+
+private const val DOCUMENTS_LIST_DEBUG_TAG = "DOCUMENTS_LIST_DEBUG"
 
 @KoinViewModel
 class DocumentsViewModel(
@@ -389,6 +393,12 @@ class DocumentsViewModel(
         return copy(items = items.map { filterableItem ->
             val data = filterableItem.payload as DocumentUi
             val failedUiItem = if (data.uiData.itemId in deferredFailedDocIds) {
+                Log.d(
+                    DOCUMENTS_LIST_DEBUG_TAG,
+                    "deferred_issuance_failed_overlay documentId=${data.uiData.itemId} " +
+                        "name=${(data.uiData.mainContentData as? ListItemMainContentDataUi.Text)?.text} " +
+                        "-> Icon(ErrorFilled) issuance_state=Failed (deferred retry gave up)"
+                )
                 data.copy(
                     documentIssuanceState = DocumentIssuanceStateUi.Failed,
                     uiData = data.uiData.copy(

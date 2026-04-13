@@ -17,6 +17,7 @@
 package eu.europa.ec.networklogic.repository
 
 import io.ktor.client.HttpClient
+import io.ktor.client.request.get
 import io.ktor.client.request.post
 import io.ktor.client.request.setBody
 import io.ktor.client.statement.bodyAsText
@@ -26,7 +27,9 @@ import kotlinx.serialization.json.Json
 import kotlinx.serialization.json.JsonObject
 import kotlinx.serialization.json.JsonPrimitive
 import kotlinx.serialization.json.buildJsonObject
+import kotlinx.serialization.json.contentOrNull
 import kotlinx.serialization.json.jsonObject
+import kotlinx.serialization.json.jsonArray
 import kotlinx.serialization.json.jsonPrimitive
 import kotlinx.serialization.json.putJsonArray
 import kotlinx.serialization.json.putJsonObject
@@ -43,6 +46,8 @@ interface WalletAttestationRepository {
         keys: List<JsonObject>,
         nonce: String?
     ): Result<String>
+
+    suspend fun getReaderCertificates(baseUrl: String): Result<List<String>>
 }
 
 class WalletAttestationRepositoryImpl(
@@ -92,5 +97,18 @@ class WalletAttestationRepositoryImpl(
             .let { Json.decodeFromString<JsonObject>(it) }
             .let { it.jsonObject["walletUnitAttestation"]?.jsonPrimitive?.content }
             ?: throw IllegalStateException("No attestation response")
+    }
+
+    override suspend fun getReaderCertificates(baseUrl: String): Result<List<String>> = runCatching {
+        httpClient.get(baseUrl)
+            .bodyAsText()
+            .let { Json.decodeFromString<JsonObject>(it) }
+            .jsonObject["data"]
+            ?.jsonArray
+            ?.mapNotNull { item ->
+                item.jsonObject["certificate"]?.jsonPrimitive?.contentOrNull?.trim()
+            }
+            ?.filter { it.isNotBlank() }
+            .orEmpty()
     }
 }

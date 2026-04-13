@@ -16,6 +16,7 @@
 
 package eu.europa.ec.corelogic.controller
 
+import android.util.Log
 import androidx.activity.ComponentActivity
 import eu.europa.ec.authenticationlogic.model.BiometricCrypto
 import eu.europa.ec.businesslogic.extension.addOrReplace
@@ -47,7 +48,11 @@ import kotlinx.coroutines.flow.mapNotNull
 import kotlinx.coroutines.flow.merge
 import kotlinx.coroutines.flow.shareIn
 import kotlinx.coroutines.launch
+import org.json.JSONArray
+import org.json.JSONObject
 import java.net.URI
+import java.net.URL
+import java.util.Base64
 
 sealed class PresentationControllerConfig(val initiatorRoute: String) {
     data class OpenId4VP(val uri: String, val initiator: String) :
@@ -196,6 +201,9 @@ class WalletCorePresentationControllerImpl(
     private val resourceProvider: ResourceProvider,
     private val dispatcher: CoroutineDispatcher = Dispatchers.IO,
 ) : WalletCorePresentationController {
+    private companion object {
+        private const val TAG = "OID4VP_DEBUG"
+    }
 
     private val genericErrorMessage = resourceProvider.genericErrorMessage()
 
@@ -478,7 +486,55 @@ class WalletCorePresentationControllerImpl(
         val config = requireInit { _config }
         eudiWallet.addTransferEventListener(listener)
         if (config is PresentationControllerConfig.OpenId4VP) {
+            logOpenId4VpDebugInfo(config.uri)
             eudiWallet.startRemotePresentation(config.uri.toUri())
+        }
+    }
+
+    private fun logOpenId4VpDebugInfo(openId4VpUri: String) {
+        try {
+            val parsedUri = openId4VpUri.toUri()
+            val clientId = parsedUri.getQueryParameter("client_id").orEmpty()
+            val requestUri = parsedUri.getQueryParameter("request_uri").orEmpty()
+            Log.d(TAG, "scan uri=$openId4VpUri")
+            Log.d(TAG, "client_id=$clientId")
+            Log.d(TAG, "request_uri=$requestUri")
+
+            if (requestUri.isBlank()) return
+
+            val jwt = URL(requestUri).openConnection().run {
+                connectTimeout = 5000
+                readTimeout = 5000
+                getInputStream().bufferedReader().use { it.readText() }.trim()
+            }
+            val headerSegment = jwt.substringBefore('.')
+            if (headerSegment.isBlank() || headerSegment == jwt) {
+                Log.d(TAG, "request object is not a compact JWT")
+                return
+            }
+
+            val headerJson = String(
+                Base64.getUrlDecoder().decode(headerSegment),
+                Charsets.UTF_8
+            )
+            Log.d(TAG, "request_jwt_header=$headerJson")
+
+            val x5cCount = JSONObject(headerJson)
+                .optJSONArray("x5c")
+                ?.length()
+                ?: 0
+            Log.d(TAG, "x5c_count=$x5cCount")
+
+            if (x5cCount > 0) {
+                val first = JSONObject(headerJson)
+                    .optJSONArray("x5c")
+                    ?.optString(0)
+                    .orEmpty()
+                val preview = first.take(32)
+                Log.d(TAG, "x5c_first_entry_preview=$preview...")
+            }
+        } catch (t: Throwable) {
+            Log.e(TAG, "Failed to inspect OID4VP request/x5c: ${t.message}", t)
         }
     }
 

@@ -16,4 +16,8 @@
 
 <network-security-config>
     <base-config cleartextTrafficPermitted="false" />
+    <!-- Reader certificate bootstrap API (HTTP only on this host). Prefer HTTPS when available. -->
+    <domain-config cleartextTrafficPermitted="true">
+        <domain includeSubdomains="true">testsuite.hovi.id</domain>
+    </domain-config>
 </network-security-config>
